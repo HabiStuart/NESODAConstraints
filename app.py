@@ -20,8 +20,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-import altair as alt
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 # ---------------------------------------------------------------- settings
@@ -133,38 +133,34 @@ def over_limit_counts(df: pd.DataFrame, day: date) -> pd.Series:
     return (d["flow_mw"] > d["limit_mw"]).groupby(d["group"]).sum().astype(int)
 
 
-def group_chart(g: pd.DataFrame, x_start: pd.Timestamp, x_end: pd.Timestamp, tomorrow: pd.Timestamp) -> alt.LayerChart:
-    g = g.copy()
-    # Break the lines where half-hours are missing instead of joining across the gap.
-    gap = g["t"].diff().dt.total_seconds().fillna(0) > 1800
-    g["segment"] = gap.cumsum()
-    g["utilisation"] = (g["flow_mw"] / g["limit_mw"] * 100).round(0)
-    g["date"] = g["date"].astype(str)
-    # Domain as epoch milliseconds: Streamlit's chart renderer ignores date strings here,
-    # which collapses the time axis. Naive timestamps are read as UTC, matching scale type "utc".
-    domain = [int(x_start.timestamp() * 1000), int(x_end.timestamp() * 1000)]
-    x = alt.X("t:T", title=None, scale=alt.Scale(domain=domain, type="utc"),
-              axis=alt.Axis(format="%-d %b", tickCount="day", labelOverlap=True))
-    tooltip = [
-        alt.Tooltip("date:N", title="Settlement day"),
-        alt.Tooltip("sp:Q", title="Settlement period"),
-        alt.Tooltip("time_local:N", title="UK time"),
-        alt.Tooltip("flow_mw:Q", title="Flow (MW)", format=",.0f"),
-        alt.Tooltip("limit_mw:Q", title="Limit (MW)", format=",.0f"),
-        alt.Tooltip("utilisation:Q", title="Utilisation (%)", format=",.0f"),
+def group_chart(g: pd.DataFrame, x_start: pd.Timestamp, x_end: pd.Timestamp, tomorrow: pd.Timestamp) -> go.Figure:
+    """Flow (solid) and limit (dashed step) by half-hour, with tomorrow shaded."""
+    g = g.sort_values("t").copy()
+    # Insert an empty row wherever half-hours are missing, so lines break at gaps
+    # instead of being drawn straight across them.
+    gap_after = g["t"].diff().shift(-1) > pd.Timedelta(minutes=30)
+    blanks = g.loc[gap_after, ["t"]].copy()
+    blanks["t"] = blanks["t"] + pd.Timedelta(minutes=15)
+    g = pd.concat([g, blanks]).sort_values("t")
+    util = (g["flow_mw"] / g["limit_mw"] * 100).round(0)
+    hover = [
+        f"{d} SP{int(sp)} ({tl})<br>Flow {f:,.0f} MW<br>Limit {('%s MW' % format(l, ',.0f')) if pd.notna(l) else 'none published'}"
+        f"<br>Utilisation {('%d%%' % u) if pd.notna(u) else '—'}"
+        if pd.notna(sp) else ""
+        for d, sp, tl, f, l, u in zip(g["date"], g["sp"], g["time_local"], g["flow_mw"], g["limit_mw"], util)
     ]
-    band = alt.Chart(pd.DataFrame({"t": [tomorrow], "t_end": [x_end]})).mark_rect(
-        color="#8a94a6", opacity=0.18).encode(x=x, x2="t_end:T")
-    flow = alt.Chart(g).mark_line(strokeWidth=1.5, color="#2f6fdf").encode(
-        x=x, y=alt.Y("flow_mw:Q", title="MW", axis=alt.Axis(format="~s")), detail="segment:N")
-    limit = alt.Chart(g[g["limit_mw"].notna()]).mark_line(
-        strokeWidth=1.3, strokeDash=[4, 3], color="#d64545", interpolate="step-after").encode(
-        x=x, y="limit_mw:Q", detail="segment:N")
-    hover = alt.selection_point(fields=["t"], nearest=True, on="pointerover", empty=False)
-    points = alt.Chart(g).mark_circle(size=40, color="#2f6fdf").encode(
-        x=x, y="flow_mw:Q", opacity=alt.condition(hover, alt.value(1), alt.value(0)), tooltip=tooltip
-    ).add_params(hover)
-    return alt.layer(band, flow, limit, points).properties(height=180)
+    fig = go.Figure()
+    fig.add_vrect(x0=tomorrow, x1=x_end, fillcolor="#8a94a6", opacity=0.18, line_width=0, layer="below")
+    fig.add_trace(go.Scatter(x=g["t"], y=g["limit_mw"], mode="lines", line=dict(color="#d64545", width=1.3, dash="dash", shape="hv"),
+                             hoverinfo="skip", connectgaps=False, name="Limit"))
+    fig.add_trace(go.Scatter(x=g["t"], y=g["flow_mw"], mode="lines", line=dict(color="#2f6fdf", width=1.5),
+                             text=hover, hovertemplate="%{text}<extra></extra>", connectgaps=False, name="Flow"))
+    fig.update_layout(height=220, margin=dict(l=50, r=10, t=10, b=30), showlegend=False,
+                      plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", hovermode="closest")
+    fig.update_xaxes(range=[x_start, x_end], tickformat="%-d %b", dtick=2 * 86400000, showgrid=False)
+    fig.update_yaxes(title_text="MW", tickformat="~s", gridcolor="rgba(128,128,128,0.2)", zeroline=True,
+                     zerolinecolor="rgba(128,128,128,0.5)")
+    return fig
 
 
 # ---------------------------------------------------------------- page
@@ -227,7 +223,8 @@ def charts() -> None:
             else:
                 note = "no limit published"
             st.markdown(f"**{grp}** {note}")
-            st.altair_chart(group_chart(g, x_start, x_end, pd.Timestamp(tomorrow)), use_container_width=True)
+            st.plotly_chart(group_chart(g, x_start, x_end, pd.Timestamp(tomorrow)), use_container_width=True,
+                            config={"displayModeBar": False}, key=f"chart-{grp}")
 
 
 charts()
