@@ -30,3 +30,10 @@ It needs outbound HTTPS to `api.neso.energy` only, holds no credentials, and sto
 - Limits of exactly 9,999, 10,000 or 99,999 MW are treated as "no limit published" (inferred).
 - Autumn clock change: NESO lists the repeated hour as adjacent pairs; the first is taken as BST.
 - Exact duplicate rows are dropped; missing half-hours are shown as gaps.
+
+## Boundary map data (in `assets/`)
+- `etys_boundaries_2025.json`: NESO ETYS boundary GIS data (March 2025), converted to British National Grid.
+- `land_outline.json`: Natural Earth 1:50m coastline (public domain).
+- `reference_map_lines.json`: boundaries traced from the old reference map image (alignment about 3 km; the lines were hand-drawn).
+- The map draws only ETYS boundaries that closely match a day-ahead constraint group (`ETYS_MAP` in `app.py`).
+  This matching is our own analysis, not a NESO publication.

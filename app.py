@@ -36,7 +36,11 @@ UK = ZoneInfo("Europe/London")
 # Limits NESO publishes that behave like "no limit" placeholders (our inference, not NESO's
 # definition): flat values that dominate groups whose real limits otherwise vary.
 PLACEHOLDER_LIMITS = {9999, 10000, 99999}
-MAP_PATH = Path(__file__).parent / "assets" / "constraint-map.png"
+ASSETS = Path(__file__).parent / "assets"
+# Map data, all in British National Grid metres (EPSG:27700):
+#   etys_boundaries_2025.json  NESO ETYS boundary GIS data (March 2025)
+#   land_outline.json          Natural Earth 1:50m coastline (public domain)
+#   reference_map_lines.json   boundaries traced from the old reference map image
 
 # Closest ETYS boundary for each day-ahead constraint group.
 # Method: substations on each side of a group's line were read from NESO's October 2026
@@ -203,13 +207,114 @@ def group_chart(g: pd.DataFrame, x_start: pd.Timestamp, x_end: pd.Timestamp, tom
     return fig
 
 
+
+# ---------------------------------------------------------------- boundary map
+# Colours for the ETYS boundaries that match a constraint group well (strong or good).
+MAP_HEIGHT = 880
+MAP_WIDTH = round(MAP_HEIGHT * 810 / 1060)
+MAP_COLOURS = {"B2": "#1f77b4", "B4": "#2ca02c", "B6": "#d62728", "B7a": "#9467bd", "B9": "#e377c2"}
+# Pixel offsets that keep the old-map labels off their own lines
+OLD_LABEL_SHIFT = {"SSE-SP": (-60, 22), "SCOTEX": (-62, 0), "SSHARN": (62, -8), "SWALEX": (-20, 28), "SEIMP": (-58, -30), "ESTEX": (58, -40)}
+OLD_MAP_NOTES = {
+    "SSE-SP": "Now SSE_SP2. Follows ETYS B4 through the central belt.",
+    "SCOTEX": "Still SCOTEX. Runs beside ETYS B6 on the east side.",
+    "SSHARN": "Now SSHARN3, which today follows ETYS B7a, well south of this line. Drawn before the April 2024 rename.",
+    "SWALEX": "No longer published (data stops May 2023). Close to ETYS SW1.",
+    "SEIMP": "Now SEIMPPR23, which today encloses London rather than following this line.",
+    "ESTEX": "Still ESTEX (also ESTEX3, ESTEX4). Around the Thames estuary, near ETYS B15.",
+}
+
+
+@st.cache_data(show_spinner=False)
+def load_map_data() -> tuple[dict, list, dict]:
+    etys = json.loads((ASSETS / "etys_boundaries_2025.json").read_text())["boundaries"]
+    land = json.loads((ASSETS / "land_outline.json").read_text())["rings"]
+    old = json.loads((ASSETS / "reference_map_lines.json").read_text())["lines"]
+    return etys, land, old
+
+
+def boundary_map(show_all_etys: bool, show_old_map: bool) -> go.Figure:
+    etys, land, old = load_map_data()
+    # Reverse lookup: ETYS boundary -> constraint groups mapped to it
+    by_boundary: dict[str, list[tuple[str, str, str]]] = {}
+    for grp, (b, match, why) in ETYS_MAP.items():
+        if b in etys:
+            by_boundary.setdefault(b, []).append((grp, match, why))
+    fig = go.Figure()
+    for ring in land:
+        xs, ys = zip(*ring)
+        fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", fill="toself", fillcolor="rgba(140,150,165,0.16)",
+                                 line=dict(color="rgba(120,130,145,0.55)", width=0.6), hoverinfo="skip", showlegend=False))
+    if show_all_etys:
+        for b, pts in etys.items():
+            if b in MAP_COLOURS:
+                continue
+            xs, ys = zip(*pts)
+            linked = by_boundary.get(b, [])
+            hover = f"<b>ETYS {b}</b><br>" + ("<br>".join(f"{g}: {m} match" for g, m, _ in linked)
+                                             if linked else "No day-ahead constraint group matches it")
+            fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line=dict(color="#8f99a6", width=1, dash="dot"),
+                                     hovertemplate=hover + "<extra></extra>", showlegend=False))
+            ex, ey = max(pts, key=lambda q: q[0])
+            fig.add_annotation(x=ex + 6000, y=ey, text=b, showarrow=False, xanchor="left",
+                               font=dict(size=9, color="#8f99a6"))
+    for b, colour in MAP_COLOURS.items():
+        pts = etys[b]
+        xs, ys = zip(*pts)
+        grp, match, why = by_boundary[b][0]
+        fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines", line=dict(color=colour, width=3),
+                                 hovertemplate=f"<b>{grp}</b> ≈ ETYS {b} ({match} match)<br>{why}<extra></extra>",
+                                 showlegend=False))
+        ex, ey = max(pts, key=lambda q: q[0])
+        nudge = {"B2": 30000, "B4": 0, "B6": -45000}.get(b, 0)
+        fig.add_annotation(x=ex + 15000, y=ey + nudge, text=f"<b>{grp}</b><br>≈ ETYS {b}", showarrow=False,
+                           xanchor="left", align="left", font=dict(size=12, color=colour))
+    if show_old_map:
+        for name, pts in old.items():
+            xs, ys = zip(*pts)
+            fig.add_trace(go.Scatter(x=xs, y=ys, mode="markers", marker=dict(color="#e8710a", size=3),
+                                     hovertemplate=f"<b>{name}</b> (old reference map)<br>{OLD_MAP_NOTES[name]}<extra></extra>",
+                                     showlegend=False))
+            cx, cy = sum(xs) / len(xs), sum(ys) / len(ys)
+            dx, dy = OLD_LABEL_SHIFT.get(name, (0, -12))
+            fig.add_annotation(x=cx, y=cy, text=f"{name} (old)", showarrow=False, font=dict(size=10, color="#e8710a"),
+                               bgcolor="rgba(255,255,255,0.8)", xshift=dx, yshift=dy)
+    fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), showlegend=False, dragmode="pan",
+                      plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", hoverlabel=dict(align="left"))
+    # Fixed size in the same proportions as the map extent (810 km x 1,060 km), so nothing is cropped
+    # or stretched. Zoom and pan still work.
+    fig.update_xaxes(range=[-30000, 780000], visible=False, fixedrange=False)
+    fig.update_yaxes(range=[0, 1060000], visible=False, scaleanchor="x", scaleratio=1)
+    fig.update_layout(width=MAP_WIDTH, height=MAP_HEIGHT)
+    return fig
+
+
 # ---------------------------------------------------------------- page
 st.title("GB day-ahead constraint flows and limits")
 
-if MAP_PATH.exists():
-    st.image(str(MAP_PATH), width=560,
-             caption="Reference map. NESO's data now uses newer names for some boundaries "
-                     "(for example SSE_SP2, SSHARN3, SEIMPPR23) and groups not drawn here.")
+map_col, notes_col = st.columns([3, 2], gap="large")
+with notes_col:
+    st.subheader("Where the constraints are")
+    st.markdown(
+        "Coloured lines are ETYS boundaries (NESO, March 2025) that closely match a day-ahead constraint group. "
+        "They show roughly where each constraint sits; NESO's own day-ahead boundaries may differ in detail.\n\n"
+        "Hover over a line for details. Scroll to zoom, drag to move, double-click to reset."
+    )
+    show_all = st.checkbox("Show all ETYS boundaries", value=False,
+                           help="Planning boundaries from NESO's Electricity Ten Year Statement. Most have no matching day-ahead group.")
+    show_old = st.checkbox("Show boundaries from the old reference map", value=False,
+                           help="Traced from the map previously on this page. Some lines are out of date.")
+    unmapped = sorted(g for g, (b, m, _) in ETYS_MAP.items() if b not in MAP_COLOURS or m not in ("strong", "good"))
+    st.caption("Not drawn (no close ETYS match): " + ", ".join(unmapped) + ". "
+               f"See NESO's [day-ahead network diagrams]({PORTAL_URL}) for their exact boundaries.")
+with map_col:
+    try:
+        st.plotly_chart(boundary_map(show_all, show_old), use_container_width=False, theme=None,
+                        config={"scrollZoom": True, "displaylogo": False,
+                                "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d"]},
+                        key="boundary-map")
+    except (OSError, KeyError, ValueError) as exc:
+        st.warning(f"The boundary map couldn't be drawn ({type(exc).__name__}: {exc}). Check the files in the assets folder.")
 
 
 @st.fragment(run_every=CHECK_EVERY)
