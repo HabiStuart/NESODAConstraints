@@ -213,6 +213,8 @@ def group_chart(g: pd.DataFrame, x_start: pd.Timestamp, x_end: pd.Timestamp, tom
 MAP_HEIGHT = 880
 MAP_WIDTH = round(MAP_HEIGHT * 810 / 1060)
 MAP_COLOURS = {"B2": "#1f77b4", "B4": "#2ca02c", "B6": "#d62728", "B7a": "#9467bd", "B9": "#e377c2"}
+# Old-map lines left off the map (they duplicate the current SSE_SP2 and SCOTEX lines)
+OLD_MAP_HIDDEN = {"SSE-SP", "SCOTEX"}
 # Pixel offsets that keep the old-map labels off their own lines
 OLD_LABEL_SHIFT = {"SSE-SP": (-60, 22), "SCOTEX": (-62, 0), "SSHARN": (62, -8), "SWALEX": (-20, 28), "SEIMP": (-58, -30), "ESTEX": (58, -40)}
 OLD_MAP_NOTES = {
@@ -271,6 +273,8 @@ def boundary_map(show_all_etys: bool, show_old_map: bool) -> go.Figure:
                            xanchor="left", align="left", font=dict(size=12, color=colour))
     if show_old_map:
         for name, pts in old.items():
+            if name in OLD_MAP_HIDDEN:
+                continue
             xs, ys = zip(*pts)
             fig.add_trace(go.Scatter(x=xs, y=ys, mode="markers", marker=dict(color="#e8710a", size=3),
                                      hovertemplate=f"<b>{name}</b> (old reference map)<br>{OLD_MAP_NOTES[name]}<extra></extra>",
