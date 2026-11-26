@@ -37,6 +37,46 @@ UK = ZoneInfo("Europe/London")
 # definition): flat values that dominate groups whose real limits otherwise vary.
 PLACEHOLDER_LIMITS = {9999, 10000, 99999}
 MAP_PATH = Path(__file__).parent / "assets" / "constraint-map.png"
+
+# Closest ETYS boundary for each day-ahead constraint group.
+# Method: substations on each side of a group's line were read from NESO's October 2026
+# day-ahead limit diagrams, then tested against the ETYS boundary lines in NESO's March 2025
+# GIS data (which side of each line each substation falls). Substation positions are
+# approximate. This is our analysis, not a NESO publication.
+# Match: strong / good / partial / weak; boundary None = no ETYS boundary matches.
+ETYS_MAP: dict[str, tuple[str | None, str, str]] = {
+    "SSE_SP2": ("B4", "strong", "All 7 testable substations on matching sides. Formerly SSE_SP."),
+    "SCOTEX": ("B6", "strong", "All 6 testable substations on matching sides: Scotland–England."),
+    "SSEN_S": ("B2", "strong", "All 9 substations on matching sides."),
+    "SSHARN3": ("B7a", "strong", "All 14 substations on matching sides. Formerly SSHARN, SHARN."),
+    "FLOWSTH": ("B9", "good", "9 of 10 substations match; Enderby is south of FLOWSTH but north of B9."),
+    "SEIMPPR23": ("B14", "partial", "Both enclose London; Iver and Laleham are inside B14 but outside SEIMPPR23. Formerly SEIMP."),
+    "HARSPNBLY": ("B7", "partial", "Both cut Harker–Hutton; Spennymoor and Teesside are south of HARSPNBLY but north of B7."),
+    "ESTEX": ("B15", "partial", "Same area (Grain, Kemsley, Medway); not tested against the GIS lines."),
+    "ESTEX3": ("B15", "partial", "Same area (Grain, Kemsley, Medway); not tested against the GIS lines."),
+    "ESTEX4": ("B15", "partial", "Same area (Grain, Kemsley, Medway); not tested against the GIS lines."),
+    "SSE_GRMO": ("B5", "weak", "Consistent with B5, but B5 runs within 5 km of most of its substations, so it can't be confirmed."),
+    "NKILGRMO": ("B5", "weak", "Consistent with B5, but B5 runs within 5 km of most of its substations, so it can't be confirmed."),
+    "NKILGRMO1": ("B5", "weak", "Assumed to follow NKILGRMO; not drawn on NESO's diagram."),
+    "DRESHEX1": (None, "", "Encloses the Humber plus Drax and Keadby; EC1 only cuts off the south Humber bank."),
+    "GM_SNOW5A": (None, "", "Encloses north-west England and North Wales; no ETYS boundary separates its substations."),
+    "CANDUNEX": (None, "", "Local Kent export boundary near the interconnector landings, inside the ETYS SC1–SC3 area."),
+    "CANSELEX": (None, "", "Local Kent export boundary near the interconnector landings, inside the ETYS SC1–SC3 area."),
+    "DUNSELEX": (None, "", "Local Kent export boundary near the interconnector landings, inside the ETYS SC1–SC3 area."),
+    "NINSELEX": (None, "", "Local Kent/Sussex export boundary near the interconnector landings, inside the ETYS SC1–SC3 area."),
+    "BOLSELEX1": (None, "", "Local Sussex/Kent export boundary near the interconnector landings, inside the ETYS SC1–SC3 area."),
+}
+LOCAL_SE = {"CANDUNEX", "CANSELEX", "DUNSELEX", "NINSELEX", "BOLSELEX1"}
+
+
+def etys_label(group: str) -> str:
+    boundary, match, _ = ETYS_MAP.get(group, (None, "", ""))
+    if group not in ETYS_MAP:
+        return "ETYS boundary: not yet mapped"
+    if boundary is None:
+        return "ETYS boundary: none (local boundary inside SC1–SC3)" if group in LOCAL_SE else "ETYS boundary: no match"
+    return f"ETYS boundary: {boundary} ({match} match)"
+
 HTTP_TIMEOUT_S = 120
 
 st.set_page_config(page_title="GB day-ahead constraint flows and limits", layout="wide")
@@ -223,11 +263,31 @@ def charts() -> None:
             else:
                 note = "no limit published"
             st.markdown(f"**{grp}** {note}")
+            st.caption(etys_label(grp), help=ETYS_MAP.get(grp, (None, "", "Not on NESO's day-ahead diagrams."))[2])
             st.plotly_chart(group_chart(g, x_start, x_end, pd.Timestamp(tomorrow)), use_container_width=True,
                             config={"displayModeBar": False}, key=f"chart-{grp}")
 
 
 charts()
+
+with st.expander("How the constraint groups relate to ETYS boundaries"):
+    st.markdown(
+        "Each group is matched to an ETYS boundary by reading which substations sit either side of its line "
+        "on NESO's October 2026 day-ahead limit diagrams, then testing which side of each ETYS boundary "
+        "(NESO's March 2025 GIS data) those substations fall. Substation positions are approximate, and "
+        "substations within 5 km of a line are not counted. This is our analysis, not something NESO publishes.\n\n"
+        "- **Strong:** every testable substation is on the matching side.\n"
+        "- **Good:** all but one substation match.\n"
+        "- **Partial:** a large part matches, but a named area falls on the other side.\n"
+        "- **Weak:** consistent, but too few substations far enough from the line to confirm."
+    )
+    st.dataframe(
+        pd.DataFrame(
+            [{"Constraint group": g, "ETYS boundary": b or ("None (inside SC1–SC3)" if g in LOCAL_SE else "No match"), "Match": m.capitalize() or "—", "Why": why}
+             for g, (b, m, why) in ETYS_MAP.items()]
+        ),
+        hide_index=True, use_container_width=True,
+    )
 
 with st.expander("How the numbers are worked out"):
     st.markdown(
