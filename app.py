@@ -213,7 +213,7 @@ def group_chart(g: pd.DataFrame, x_start: pd.Timestamp, x_end: pd.Timestamp, tom
 
 # ---------------------------------------------------------------- boundary map
 # Colours for the ETYS boundaries that match a constraint group well (strong or good).
-MAP_HEIGHT = 560  # suits the side column; the map keeps its true shape at any width
+MAP_HEIGHT = 900  # the map keeps its true shape at any width
 MAP_COLOURS = {"B2": "#1f77b4", "B4": "#2ca02c", "B6": "#d62728", "B7a": "#9467bd", "B9": "#e377c2"}
 # Old-map lines left off the map (they duplicate the current SSE_SP2 and SCOTEX lines)
 OLD_MAP_HIDDEN = {"SSE-SP", "SCOTEX"}
@@ -297,7 +297,7 @@ def boundary_map(show_all_etys: bool, show_old_map: bool) -> go.Figure:
 # ---------------------------------------------------------------- page
 st.title("GB day-ahead constraint flows and limits")
 
-main_col, side_col = st.columns([5, 2], gap="large")
+main_col, side_col = st.columns([3, 2], gap="large")
 with side_col:
     st.subheader("Where the constraints are")
     st.caption(
