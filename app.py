@@ -88,6 +88,10 @@ st.set_page_config(page_title="GB day-ahead constraint flows and limits", layout
 
 
 # ---------------------------------------------------------------- NESO access
+class IncompleteDownload(RuntimeError):
+    """NESO's response was empty or didn't reach today: not cached, retried on the next check."""
+
+
 def _get_json(url: str) -> dict:
     req = urllib.request.Request(url, headers={"User-Agent": "habitat-da-constraints-dashboard"})
     with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_S) as resp:
@@ -121,7 +125,17 @@ def load_window(start: str, last_modified: str) -> pd.DataFrame:
         f'FROM "{RESOURCE_ID}" WHERE "Date_ Time GMT_BST" >= \'{start}\' ORDER BY _id'
     )
     records = _get_json(f"{API}/datastore_search_sql?sql={urllib.parse.quote(sql)}")["records"]
-    return clean(pd.DataFrame(records, columns=["_id", "g", "t", "l", "f"]))
+    # Never cache an empty or partial download: raising here means Streamlit doesn't store the
+    # result, so the next check (or reload) tries again. This happens if the app downloads while
+    # NESO is part-way through reloading the dataset.
+    if not records:
+        raise IncompleteDownload("NESO returned no rows; it may be part-way through updating the data.")
+    df = clean(pd.DataFrame(records, columns=["_id", "g", "t", "l", "f"]))
+    newest = max(df["date"]) if not df.empty else None
+    if newest is None or newest < datetime.now(UK).date():
+        raise IncompleteDownload(f"NESO's data currently stops at {newest or 'no date'}; "
+                                 "it may be part-way through updating.")
+    return df
 
 
 # ---------------------------------------------------------------- cleaning
@@ -332,6 +346,9 @@ def charts() -> None:
         modified = neso_last_modified()
         # Always download the longest window, so moving the slider doesn't trigger a new download.
         df = load_window((today - timedelta(days=MAX_HISTORY_DAYS)).isoformat(), modified)
+    except IncompleteDownload as exc:
+        st.warning(f"{exc} The page tries again automatically every {CHECK_EVERY}, or reload the page to try now.")
+        return
     except Exception as exc:  # network or API problem: say what happened, don't show stale guesses
         st.error(f"Couldn't load data from NESO ({type(exc).__name__}: {exc}). "
                  f"The page retries automatically every {CHECK_EVERY}.")
