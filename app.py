@@ -139,7 +139,11 @@ def group_chart(g: pd.DataFrame, x_start: pd.Timestamp, x_end: pd.Timestamp, tom
     gap = g["t"].diff().dt.total_seconds().fillna(0) > 1800
     g["segment"] = gap.cumsum()
     g["utilisation"] = (g["flow_mw"] / g["limit_mw"] * 100).round(0)
-    x = alt.X("t:T", title=None, scale=alt.Scale(domain=[x_start.isoformat(), x_end.isoformat()], type="utc"),
+    g["date"] = g["date"].astype(str)
+    # Domain as epoch milliseconds: Streamlit's chart renderer ignores date strings here,
+    # which collapses the time axis. Naive timestamps are read as UTC, matching scale type "utc".
+    domain = [int(x_start.timestamp() * 1000), int(x_end.timestamp() * 1000)]
+    x = alt.X("t:T", title=None, scale=alt.Scale(domain=domain, type="utc"),
               axis=alt.Axis(format="%-d %b", tickCount="day", labelOverlap=True))
     tooltip = [
         alt.Tooltip("date:N", title="Settlement day"),
@@ -149,8 +153,8 @@ def group_chart(g: pd.DataFrame, x_start: pd.Timestamp, x_end: pd.Timestamp, tom
         alt.Tooltip("limit_mw:Q", title="Limit (MW)", format=",.0f"),
         alt.Tooltip("utilisation:Q", title="Utilisation (%)", format=",.0f"),
     ]
-    band = alt.Chart(pd.DataFrame({"a": [tomorrow.isoformat()], "b": [x_end.isoformat()]})).mark_rect(
-        color="#8a94a6", opacity=0.18).encode(x=alt.X("a:T", scale=alt.Scale(type="utc")), x2="b:T")
+    band = alt.Chart(pd.DataFrame({"t": [tomorrow], "t_end": [x_end]})).mark_rect(
+        color="#8a94a6", opacity=0.18).encode(x=x, x2="t_end:T")
     flow = alt.Chart(g).mark_line(strokeWidth=1.5, color="#2f6fdf").encode(
         x=x, y=alt.Y("flow_mw:Q", title="MW", axis=alt.Axis(format="~s")), detail="segment:N")
     limit = alt.Chart(g[g["limit_mw"].notna()]).mark_line(
