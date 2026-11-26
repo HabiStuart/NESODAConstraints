@@ -1,0 +1,5 @@
+# Pinned so the app behaves the same wherever it's installed.
+streamlit==1.45.1
+pandas==2.2.3
+numpy==2.2.6
+altair==5.5.0
