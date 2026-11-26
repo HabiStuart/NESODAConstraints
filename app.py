@@ -31,7 +31,8 @@ RESOURCE_ID = "38a18ec1-9e40-465d-93fb-301e80fd1352"
 PORTAL_URL = "https://www.neso.energy/data-portal/day-ahead-constraint-flows-and-limits"
 CHECK_EVERY = "10m"            # how often an open page re-checks NESO
 METADATA_TTL_S = 300           # cache NESO's "last modified" check for 5 minutes
-HISTORY_DAYS = 14              # days before today shown on the charts
+HISTORY_DAYS = 14              # default number of days before today shown on the charts
+MAX_HISTORY_DAYS = 60          # most days the slider allows (and how far back the app downloads)
 UK = ZoneInfo("Europe/London")
 # Limits NESO publishes that behave like "no limit" placeholders (our inference, not NESO's
 # definition): flat values that dominate groups whose real limits otherwise vary.
@@ -179,6 +180,8 @@ def over_limit_counts(df: pd.DataFrame, day: date) -> pd.Series:
 
 def group_chart(g: pd.DataFrame, x_start: pd.Timestamp, x_end: pd.Timestamp, tomorrow: pd.Timestamp) -> go.Figure:
     """Flow (solid) and limit (dashed step) by half-hour, with tomorrow shaded."""
+    span_days = max(1, (x_end - x_start).days)
+    tick_days = max(1, -(-span_days // 8))  # about eight date labels whatever the span
     g = g.sort_values("t").copy()
     # Insert an empty row wherever half-hours are missing, so lines break at gaps
     # instead of being drawn straight across them.
@@ -201,7 +204,7 @@ def group_chart(g: pd.DataFrame, x_start: pd.Timestamp, x_end: pd.Timestamp, tom
                              text=hover, hovertemplate="%{text}<extra></extra>", connectgaps=False, name="Flow"))
     fig.update_layout(height=220, margin=dict(l=50, r=10, t=10, b=30), showlegend=False,
                       plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", hovermode="closest")
-    fig.update_xaxes(range=[x_start, x_end], tickformat="%-d %b", dtick=2 * 86400000, showgrid=False)
+    fig.update_xaxes(range=[x_start, x_end], tickformat="%-d %b", dtick=tick_days * 86400000, showgrid=False)
     fig.update_yaxes(title_text="MW", tickformat="~s", gridcolor="rgba(128,128,128,0.2)", zeroline=True,
                      zerolinecolor="rgba(128,128,128,0.5)")
     return fig
@@ -210,8 +213,7 @@ def group_chart(g: pd.DataFrame, x_start: pd.Timestamp, x_end: pd.Timestamp, tom
 
 # ---------------------------------------------------------------- boundary map
 # Colours for the ETYS boundaries that match a constraint group well (strong or good).
-MAP_HEIGHT = 880
-MAP_WIDTH = round(MAP_HEIGHT * 810 / 1060)
+MAP_HEIGHT = 560  # suits the side column; the map keeps its true shape at any width
 MAP_COLOURS = {"B2": "#1f77b4", "B4": "#2ca02c", "B6": "#d62728", "B7a": "#9467bd", "B9": "#e377c2"}
 # Old-map lines left off the map (they duplicate the current SSE_SP2 and SCOTEX lines)
 OLD_MAP_HIDDEN = {"SSE-SP", "SCOTEX"}
@@ -285,50 +287,51 @@ def boundary_map(show_all_etys: bool, show_old_map: bool) -> go.Figure:
                                bgcolor="rgba(255,255,255,0.8)", xshift=dx, yshift=dy)
     fig.update_layout(margin=dict(l=0, r=0, t=0, b=0), showlegend=False, dragmode="pan",
                       plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)", hoverlabel=dict(align="left"))
-    # Fixed size in the same proportions as the map extent (810 km x 1,060 km), so nothing is cropped
-    # or stretched. Zoom and pan still work.
+    # Equal scale on both axes keeps GB's true shape at any column width.
     fig.update_xaxes(range=[-30000, 780000], visible=False, fixedrange=False)
     fig.update_yaxes(range=[0, 1060000], visible=False, scaleanchor="x", scaleratio=1)
-    fig.update_layout(width=MAP_WIDTH, height=MAP_HEIGHT)
+    fig.update_layout(height=MAP_HEIGHT)
     return fig
 
 
 # ---------------------------------------------------------------- page
 st.title("GB day-ahead constraint flows and limits")
 
-map_col, notes_col = st.columns([3, 2], gap="large")
-with notes_col:
+main_col, side_col = st.columns([5, 2], gap="large")
+with side_col:
     st.subheader("Where the constraints are")
-    st.markdown(
+    st.caption(
         "Coloured lines are ETYS boundaries (NESO, March 2025) that closely match a day-ahead constraint group. "
-        "They show roughly where each constraint sits; NESO's own day-ahead boundaries may differ in detail.\n\n"
+        "They show roughly where each constraint sits; NESO's own day-ahead boundaries may differ in detail. "
         "Hover over a line for details. Scroll to zoom, drag to move, double-click to reset."
     )
     show_all = st.checkbox("Show all ETYS boundaries", value=False,
                            help="Planning boundaries from NESO's Electricity Ten Year Statement. Most have no matching day-ahead group.")
     show_old = st.checkbox("Show boundaries from the old reference map", value=False,
                            help="Traced from the map previously on this page. Some lines are out of date.")
-    unmapped = sorted(g for g, (b, m, _) in ETYS_MAP.items() if b not in MAP_COLOURS or m not in ("strong", "good"))
-    st.caption("Not drawn (no close ETYS match): " + ", ".join(unmapped) + ". "
-               f"See NESO's [day-ahead network diagrams]({PORTAL_URL}) for their exact boundaries.")
-with map_col:
     try:
-        st.plotly_chart(boundary_map(show_all, show_old), use_container_width=False, theme=None,
+        st.plotly_chart(boundary_map(show_all, show_old), use_container_width=True, theme=None,
                         config={"scrollZoom": True, "displaylogo": False,
                                 "modeBarButtonsToRemove": ["select2d", "lasso2d", "autoScale2d"]},
                         key="boundary-map")
     except (OSError, KeyError, ValueError) as exc:
         st.warning(f"The boundary map couldn't be drawn ({type(exc).__name__}: {exc}). Check the files in the assets folder.")
+    unmapped = sorted(g for g, (b, m, _) in ETYS_MAP.items() if b not in MAP_COLOURS or m not in ("strong", "good"))
+    st.caption("Not drawn (no close ETYS match): " + ", ".join(unmapped) + ". "
+               f"See NESO's [day-ahead network diagrams]({PORTAL_URL}) for their exact boundaries.")
 
 
 @st.fragment(run_every=CHECK_EVERY)
 def charts() -> None:
     today = datetime.now(UK).date()
     tomorrow = today + timedelta(days=1)
-    start = today - timedelta(days=HISTORY_DAYS)
+    days_back = st.slider("Days before today to show", min_value=1, max_value=MAX_HISTORY_DAYS,
+                          value=HISTORY_DAYS, key="days_back", help="The charts always end tomorrow.")
+    start = today - timedelta(days=days_back)
     try:
         modified = neso_last_modified()
-        df = load_window(start.isoformat(), modified)
+        # Always download the longest window, so moving the slider doesn't trigger a new download.
+        df = load_window((today - timedelta(days=MAX_HISTORY_DAYS)).isoformat(), modified)
     except Exception as exc:  # network or API problem: say what happened, don't show stale guesses
         st.error(f"Couldn't load data from NESO ({type(exc).__name__}: {exc}). "
                  f"The page retries automatically every {CHECK_EVERY}.")
@@ -377,7 +380,8 @@ def charts() -> None:
                             config={"displayModeBar": False}, key=f"chart-{grp}")
 
 
-charts()
+with main_col:
+    charts()
 
 with st.expander("How the constraint groups relate to ETYS boundaries"):
     st.markdown(
