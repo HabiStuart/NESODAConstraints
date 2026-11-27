@@ -73,6 +73,34 @@ ETYS_MAP: dict[str, tuple[str | None, str, str]] = {
 }
 LOCAL_SE = {"CANDUNEX", "CANSELEX", "DUNSELEX", "NINSELEX", "BOLSELEX1"}
 
+# Approximate latitude (degrees north) of each constraint group's boundary, used to order the charts
+# north to south. Estimated from where each line runs on NESO's October 2026 day-ahead diagrams
+# (and the matching ETYS 2025 lines); groups not listed go last, alphabetically.
+GROUP_LATITUDE: dict[str, float] = {
+    "SSEN_S": 56.8,        # Fetteresso/Alyth, Melgarve/Tummel
+    "SSE_SP2": 56.3,       # Braco West, Tealing–Westfield
+    "SSE_GRMO": 55.95,     # south of Denny/Lambhill
+    "NKILGRMO": 55.94,     # south of Denny
+    "NKILGRMO1": 55.93,
+    "SCOTEX": 55.1,        # Gretna/Harker to Eccles/Stella West
+    "GALLEX": 55.0,        # Dumfries and Galloway (no longer published)
+    "HARSPNBLY": 54.8,     # Harker–Hutton, Stella West–Spennymoor
+    "SSHARN3": 54.0,       # Penwortham to Teesside/York (ETYS B7a)
+    "DRESHEX1": 53.65,     # Humber, Drax, Keadby
+    "GM_SNOW5A": 53.6,     # north-west England and North Wales
+    "FLOWSTH": 52.6,       # Midlands to the Wash (ETYS B9)
+    "SEIMPPR23": 51.6,     # London
+    "ESTEX": 51.42,        # Thames estuary
+    "ESTEX3": 51.41,
+    "ESTEX4": 51.40,
+    "CANSELEX": 51.2,      # Canterbury–Sellindge
+    "CANDUNEX": 51.1,      # Canterbury–Dungeness
+    "BOLSELEX1": 51.05,    # Bolney–Sellindge
+    "DUNSELEX": 51.0,      # Dungeness–Sellindge
+    "NINSELEX": 50.95,     # Ninfield–Sellindge
+}
+
+
 
 def etys_label(group: str) -> str:
     boundary, match, _ = ETYS_MAP.get(group, (None, "", ""))
@@ -360,22 +388,23 @@ def charts() -> None:
         return
 
     last_day = max(df["date"])
-    # Order: groups over their limit tomorrow first; if tomorrow isn't published yet, use the
-    # latest day that is, and say so.
+    # Over-limit counts (shown in chart titles) are for tomorrow, or the latest published day.
     rank_day = tomorrow if last_day >= tomorrow else last_day
     counts = over_limit_counts(df, rank_day)
-    groups = sorted(df["group"].unique(), key=lambda g: (-int(counts.get(g, 0)), g))
+    # Order charts north to south; groups without a known latitude go last, alphabetically.
+    groups = sorted(df["group"].unique(), key=lambda g: (g not in GROUP_LATITUDE, -GROUP_LATITUDE.get(g, 0), g))
 
     pulled = datetime.now(timezone.utc).astimezone(UK).strftime("%H:%M on %-d %b")
     st.subheader(f"Forecast flow against limit, {start:%-d %b} to {tomorrow:%-d %b %Y}")
     st.caption(
         f"Source: [NESO Data Portal]({PORTAL_URL}), last updated by NESO {modified[:16].replace('T', ' ')} UTC. "
         f"Checked {pulled} (UK time); this page re-checks every {CHECK_EVERY}. "
+        "Charts run north to south, reading left to right. "
         "Blue: forecast flow (MW). Red dashed: limit (MW, where published). Grey band: tomorrow."
     )
     if last_day < tomorrow:
         st.info(f"NESO hasn't published tomorrow ({tomorrow:%-d %b}) yet; the data stops at {last_day:%-d %b}. "
-                f"Charts are ordered by over-limit half-hours on {rank_day:%-d %b} until it arrives. "
+                f"Over-limit counts in the chart titles are for {rank_day:%-d %b} until it arrives. "
                 "NESO has typically published around 16:00 UK time.")
 
     x_start = pd.Timestamp(start)
